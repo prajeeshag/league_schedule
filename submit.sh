@@ -5,8 +5,8 @@
 #PBS -W depend=afterok:
 #PBS -l place=scatter
 #PBS -l select=1:ncpus=36
-cd /home/cccr/prajeesh/league_schedule
+cd /home/cccr/prajeesh/constrain_programming
 rm -f *.o* *.e*
 source .venv/bin/activate
 
-aprun python schedule.py -t 14 -d 26 --matches_per_day 7 --cpu 72 > output.log
+aprun python schdl.py --cpu 72  > output.log 2>&1

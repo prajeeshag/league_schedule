@@ -145,6 +145,7 @@ def accum_team_pool(team_vs_pool, row):
     team_vs_pool[row['home']-1][row['away pool']-1] += 1
     team_vs_pool[row['away']-1][row['home pool']-1] += 1
     return team_vs_pool
+
 def screen_dump_results(scheduled_games):
 
     for row in scheduled_games:
