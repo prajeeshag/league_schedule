@@ -21,14 +21,24 @@ DEFAULT_DAILY_MATCHES = [
     (0, 0, 0),
     (2, 2, 2),
     (2, 2, 2),
-    (2, 4, 2),
+    (4, 4, 2),
 ]
 
 TEAMS = ("YFC", "BSK", "KBFC", "SRV", "BTZ", "RFC",
-         "RGM", "BFC", "TTM", "TMFC", "FCC", "SAR")
+         "RGM", "BFC", "TTM", "FCT", "FCC", "SAR")
+
+GROUNDS = (
+    "Vadakkumpuram Ground, Panayur",
+    "SRV Ground, Chorottur",
+    "Koodathilthodi Ground, Velliyad",
+    "Ariyamkavu Ground, Koonathara",
+    "Panchayath Ground, Vaniyamkulam",
+    "TRK School Ground, Vaniyamkulam",
+    "Evershine Ground, Manissery",
+)
+
 GROUND_ID = (0,     0,      1,     1,     2,     2,
              3,     3,     4,      4,     5,     6)
-
 
 def set_consecutive_days(match_days, nc=1):
     consecutive_days = []
@@ -101,19 +111,66 @@ def set_matchdays(num_matches, initial=[]):
     return match_days
 
 
+def get_scheduled_fixtures(solver, fixtures, start_date, match_days):
+    startdate = datetime.datetime.strptime(start_date, "%d/%m/%Y")
+    fixed_matches = []
+    for (day, fd) in enumerate(fixtures):
+        for (home, fh) in enumerate(fd):
+            for (away, fixture) in enumerate(fh):
+                if solver.Value(fixture):
+                    Date = startdate + \
+                        datetime.timedelta(days=match_days[day][-1])
+                    Ground = GROUND_ID[home]
+                    fixed_matches += [(Date, home, away,
+                                       Ground, match_days[day][-1]), ]
+    return fixed_matches
+
+
+def screen_dump_results(scheduled_games):
+    print("")
+    print("")
+    print("-"*80)
+    for item in scheduled_games:
+        date = item[0].strftime("%b. %d %a")
+        homeTeam = TEAMS[item[1]]
+        awayTeam = TEAMS[item[2]]
+        Ground = GROUNDS[item[3]]
+        print("   {0: >12} | {1: >4} x {2: <4} | {3: <100}".format(
+            date, homeTeam, awayTeam, Ground))
+        print("-"*80)
+
+
+def report_results(solver, status, fixtures, start_date, match_days, time_limit=None, csv=None):
+
+    if status == cp_model.INFEASIBLE:
+        print('INFEASIBLE')
+        return status
+
+    if status == cp_model.UNKNOWN:
+        print('Not enough time allowed to compute a solution')
+        print('Add more time using the --timelimit command line option')
+        return status
+
+    print('Optimal objective value: %i' % solver.ObjectiveValue())
+
+    scheduled_games = get_scheduled_fixtures(
+        solver, fixtures, start_date, match_days)
+
+    screen_dump_results(scheduled_games)
+
+    if status != cp_model.OPTIMAL and solver.WallTime() >= time_limit:
+        print('Please note that solver reached maximum time allowed %i.' % time_limit)
+        print('A better solution than %i might be found by adding more time using the --timelimit command line option' %
+              solver.ObjectiveValue())
+
+
 def model_matches(num_teams=12, num_grounds=7, initial=[]):
-
     model = cp_model.CpModel()
-    initial = [(2, 2, 1), (4, 4, 2)]
     num_matches = (num_teams * (num_teams - 1)) // 2
-
     grounds = range(num_grounds)
-
     print("# of half season matches: {}".format(num_matches))
-
     teams = range(num_teams)
     daily_matches = set_matchdays(num_matches, initial=initial)
-    print(sum([i for (i, j) in daily_matches]))
 
     match_days = []
     for (daynum, (mi, mx, numgrnd)) in enumerate(daily_matches):
@@ -122,6 +179,7 @@ def model_matches(num_teams=12, num_grounds=7, initial=[]):
 
     num_match_days = len(match_days)
     matchdays = range(num_match_days)
+    print(matchdays)
 
     print("# of match days: %i" % (num_match_days))
 
@@ -174,7 +232,7 @@ def model_matches(num_teams=12, num_grounds=7, initial=[]):
                 model.Add(sum([fixtures[d][i][j] + fixtures[d][j][i]
                                for d in matchdays]) == 1)
 
-    return (model, fixtures)
+    return (model, fixtures, match_days)
 
 
 def solve_model(model, time_limit=None, num_cpus=None, debug=False):
@@ -234,11 +292,13 @@ def main():
     cpu = cpu_guess_and_gripe(args.cpu)
 
     # set up the model
-    (model, fixtures) = model_matches()
+    initial = [(2, 2, 1), (4, 4, 2)]
+    start_date = "30/01/2021"
+    (model, fixtures, match_days) = model_matches(initial=initial)
     (solver, status) = solve_model(model, args.time_limit, cpu, args.debug)
-    report_results(solver, status, fixtures, args.time_limit, args.csv)
+    report_results(solver, status, fixtures, start_date,
+                   match_days, args.time_limit, args.csv)
 
 
 if __name__ == "__main__":
-    date = datetime.datetime.strptime("30/01/2021", "%d/%m/%Y")
     main()
