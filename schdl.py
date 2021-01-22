@@ -8,38 +8,80 @@ from functools import reduce
 
 from ortools.sat.python import cp_model
 
+DEFAULT_DAILY_MATCHES = [
+    (0, 0),
+    (0, 0),
+    (0, 0),
+    (0, 0),
+    (2, 2),
+    (2, 2),
+    (2, 4),
+]
 
-def opponent_fixtures(model, num_teams, day, home_team):
-    name_prefix = 'fixture: day %i, home %i, ' % (day, home_team)
-    return [model.NewBoolVar(name_prefix+'away %i' % away) for away in range(num_teams)]
+DEFAULT_NUM_GROUNDS = [0, 0, 0, 0, 2, 2, 2]
 
-
-def home_fixtures(model, num_teams, day):
-    opp_fix = partial(opponent_fixtures, model=model,
-                      num_teams=num_teams, day=day)
-    result = list(map(lambda x: opp_fix(home_team=x), list(range(num_teams))))
-    return result
-
-
-def daily_thing(fn, model, num_teams, num_days):
-    fixed = partial(fn, model=model, num_teams=num_teams)
-    result = list(map(lambda x: fixed(day=x), list(range(num_days))))
-    return result
-
-
-def daily_fixtures(model, num_teams, num_days):
-    return daily_thing(home_fixtures,
-                       model=model, num_teams=num_teams, num_days=num_days)
+TEAMS = (
+    ('YFC', 'BSK'),
+    ('KBFC', 'SRV'),
+    ('BTZ', 'RFC'),
+    ('RGM', 'BFC'),
+    ('TTM', 'TMFC'),
+    'FCC', 'SAR'
+)
 
 
-def create_at_home_array(model, num_teams, day):
-    name_prefix = 'at_home: day %i, ' % day
-    return [model.NewBoolVar(name_prefix+'home %i' % home) for home in range(num_teams)]
+def set_matchdays(num_matches, initial=[]):
 
+    print("# of matches to be assigned: {}".format(num_matches))
 
-def daily_at_home(model, num_teams, num_days):
-    return daily_thing(create_at_home_array,
-                       model=model, num_teams=num_teams, num_days=num_days)
+    match_days = initial
+
+    min_matches_per_week = sum(
+        [mi for (mi, mx) in DEFAULT_DAILY_MATCHES)
+    max_matches_per_week = sum(
+        [mx for (mi, mx) in DEFAULT_DAILY_MATCHES)
+    print("Min and Max Matches per Week {} {}".format(
+        min_matches_per_week, max_matches_per_week))
+
+    min_initial = sum([mi for (mi, mx) in match_days])
+    max_initial = sum([mx for (mi, mx) in match_days])
+
+    num_matches_left_max = int(num_matches - max_initial)
+    num_full_weeks = num_matches_left_max//max_matches_per_week
+    print("Number full weeks: {}".format(num_full_weeks))
+
+    for i in range(num_full_weeks):
+        match_days += DEFAULT_DAILY_MATCHES
+
+    tmp = sum([mx for (mi, mx) in match_days])
+    rm_matches_max = num_matches - tmp
+
+    tmp = sum([mi for (mi, mx) in match_days])
+    rm_matches_min = num_matches - tmp
+
+    print("# of remaining matches (min): {}".format(rm_matches_min))
+    print("# of remaining matches (max): {}".format(rm_matches_max))
+
+    while(rm_matches_min > 0):
+        for day in DEFAULT_DAILY_MATCHES:
+            if rm_matches_min < 1:
+                break
+            if rm_matches_max > 0:
+                mtchs = min(rm_matches_min, day[0])
+                match_days += [(mtchs, day[1])]
+            else:
+                mtchs = min(rm_matches_min, day[1])
+                match_days += [(0, mtchs)]
+            rm_matches_min -= mtchs
+            rm_matches_max -= mtchs
+
+    tmp = sum([mx for (mi, mx) in match_days])
+    print("# of matches(max): {}".format(tmp))
+
+    tmp = sum([mi for (mimn, mxmn) in match_days])
+    print("# of matches(min): {}".format(tmp))
+
+    return match_days
 
 
 def model_matches():
@@ -141,77 +183,6 @@ def solve_model(model,
     return (solver, status)
 
 
-def screen_dump_results(scheduled_games):
-    for row in scheduled_games:
-        [print('%s=%i,' % (k, v), end=' ') for (k, v) in row.items()]
-        print()
-
-
-def get_scheduled_fixtures(solver, fixtures):
-    fixed_matches = [{'day': day+1, 'home': home+1, 'away': away+1, }
-                     for (day, fd) in enumerate(fixtures)
-                     for (home, fh) in enumerate(fd)
-                     for (away, fixture) in enumerate(fh)
-                     if solver.Value(fixture)]
-    return list(fixed_matches)
-
-
-def report_results(solver, status, fixtures, time_limit=None, csv=None):
-
-    if status == cp_model.INFEASIBLE:
-        print('INFEASIBLE')
-        return status
-
-    if status == cp_model.UNKNOWN:
-        print('Not enough time allowed to compute a solution')
-        print('Add more time using the --timelimit command line option')
-        return status
-
-    print('Optimal objective value: %i' % solver.ObjectiveValue())
-
-    scheduled_games = get_scheduled_fixtures(solver, fixtures)
-
-    screen_dump_results(scheduled_games)
-
-    if status != cp_model.OPTIMAL and solver.WallTime() >= time_limit:
-        print('Please note that solver reached maximum time allowed %i.' % time_limit)
-        print('A better solution than %i might be found by adding more time using the --timelimit command line option' %
-              solver.ObjectiveValue())
-
-
-def cpu_guess_and_gripe(cpu):
-
-    try:
-        ncpu = len(os.sched_getaffinity(0))
-    except AttributeError:
-        ncpu = 1
-
-    if ncpu == 1:
-        try:
-            ncpu = os.cpu_count()
-        except AttributeError:
-            ncpu = 1
-
-    print('# of cpus available: {}'.format(ncpu))
-
-    if not cpu:
-        cpu = min(6, ncpu)
-    print('Setting number of search workers to %i' % cpu)
-
-    if cpu > ncpu:
-        print('You asked for %i workers to be used, but the os only reports %i CPUs available.  This might slow down processing' % (cpu, ncpu))
-
-    if cpu != 6:
-        if cpu < ncpu:
-            print('Using %i workers, but there are %i CPUs available.  You might get faster results by using the command line option --cpu %i, but be aware ORTools CP-SAT solver is tuned to 6 CPUs' % (cpu, ncpu, ncpu))
-
-        if cpu > 6:
-            print(
-                'Using %i workers.  Be aware ORTools CP-SAT solver is tuned to 6 CPUs' % cpu)
-
-    return cpu
-
-
 def main():
     """Entry point of the program."""
     parser = argparse.ArgumentParser(
@@ -240,4 +211,12 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    date = datetime.
+    mi = 0
+    mx = 0
+    initial = [(2, 2), (4, 4)]
+    daily_matches = set_matchdays(66, initial=initial)
+    for day in daily_matches:
+        print(date.strftime("%d/%m")+" " +
+          calendar.day_abbr[date.weekday()]+" - ", day, mi, mx)
+    date += datetime.timedelta(days=1)
