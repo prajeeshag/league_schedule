@@ -40,6 +40,7 @@ GROUNDS = (
 GROUND_ID = (0,     0,      1,     1,     2,     2,
              3,     3,     4,      4,     5,     6)
 
+
 def set_consecutive_days(match_days, nc=1):
     consecutive_days = []
     for i in range(len(match_days)-nc):
@@ -130,14 +131,25 @@ def screen_dump_results(scheduled_games):
     print("")
     print("")
     print("-"*80)
-    for item in scheduled_games:
-        date = item[0].strftime("%b. %d %a")
-        homeTeam = TEAMS[item[1]]
-        awayTeam = TEAMS[item[2]]
-        Ground = GROUNDS[item[3]]
-        print("   {0: >12} | {1: >4} x {2: <4} | {3: <100}".format(
-            date, homeTeam, awayTeam, Ground))
-        print("-"*80)
+    checkname = 'output.csv'
+    with open(checkname, 'w', newline='') as csvfile:
+        fieldnames = ['date', 'HomeTeam', 'AwayTeam', 'Ground']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        prev_date = None
+        for (d, item) in enumerate(scheduled_games):
+            date = item[0].strftime("%b. %d %a")
+            homeTeam = TEAMS[item[1]]
+            awayTeam = TEAMS[item[2]]
+            Ground = GROUNDS[item[3]]
+            width = len(Ground)
+
+            if not prev_date == date:
+                print("-"*60)
+                print("   {0: >12} ".format(date))
+            print("               {0: >4} x {1: <4} | {2: <{width}}".format(
+                homeTeam, awayTeam, Ground, width=width))
+            prev_date = date
 
 
 def report_results(solver, status, fixtures, start_date, match_days, time_limit=None, csv=None):
@@ -238,13 +250,7 @@ def model_matches(num_teams=12, num_grounds=7, initial=[]):
 def solve_model(model, time_limit=None, num_cpus=None, debug=False):
     # run the solver
     solver = cp_model.CpSolver()
-    # solver.parameters.max_time_in_seconds = time_limit
-    # solver.parameters.log_search_progress = debug
     solver.parameters.num_search_workers = num_cpus
-
-    # solution_printer = SolutionPrinter() # since we stop at first
-    # solution, this isn't really
-    # necessary I think
     status = solver.Solve(model)
     print("Solve status: %s" % solver.StatusName(status))
     print("Statistics")
