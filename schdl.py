@@ -130,7 +130,7 @@ def get_scheduled_fixtures(solver, fixtures, start_date, match_days):
 def screen_dump_results(scheduled_games):
     print("")
     print("")
-    print("-"*80)
+    print("-------- Fixture -----------")
     checkname = 'output.csv'
     with open(checkname, 'w', newline='') as csvfile:
         fieldnames = ['date', 'HomeTeam', 'AwayTeam', 'Ground']
@@ -145,8 +145,9 @@ def screen_dump_results(scheduled_games):
             width = len(Ground)
 
             if not prev_date == date:
-                print("-"*60)
-                print("   {0: >12} ".format(date))
+                print("")
+                print("")
+                print("---> {0: >12} ".format(date))
             print("               {0: >4} x {1: <4} | {2: <{width}}".format(
                 homeTeam, awayTeam, Ground, width=width))
             prev_date = date
@@ -176,7 +177,7 @@ def report_results(solver, status, fixtures, start_date, match_days, time_limit=
               solver.ObjectiveValue())
 
 
-def model_matches(num_teams=12, num_grounds=7, initial=[]):
+def model_matches(num_teams=12, num_grounds=7, initial=[], max_home_stand=2):
     model = cp_model.CpModel()
     num_matches = (num_teams * (num_teams - 1)) // 2
     grounds = range(num_grounds)
@@ -191,7 +192,6 @@ def model_matches(num_teams=12, num_grounds=7, initial=[]):
 
     num_match_days = len(match_days)
     matchdays = range(num_match_days)
-    print(matchdays)
 
     print("# of match days: %i" % (num_match_days))
 
@@ -205,7 +205,13 @@ def model_matches(num_teams=12, num_grounds=7, initial=[]):
         ground_fixture.append(
             [model.NewBoolVar(name_prefix+'ground %i' % ground) for ground in grounds])
 
-    # Link match fixtures to ground fixtures
+    home_fixture = []
+    for day in matchdays:
+        name_prefix = 'day %i, ' % (day)
+        home_fixture.append(
+            [model.NewBoolVar(name_prefix+'home %i' % i) for i in teams])
+
+    # Link match fixtures to ground fixtures and home fixtures
     for d in matchdays:
         for i in teams:
             for j in teams:
@@ -217,12 +223,18 @@ def model_matches(num_teams=12, num_grounds=7, initial=[]):
                 elif i != j:
                     model.AddImplication(
                         fixtures[d][i][j], ground_fixture[d][GROUND_ID[i]])
+                    model.AddImplication(
+                        fixtures[d][i][j], home_fixture[d][i])
+                    model.AddImplication(
+                        fixtures[d][i][j], home_fixture[d][j].Not())
 
     # forbid playing self
     [model.Add(fixtures[d][i][i] == 0) for d in matchdays for i in teams]
 
     # minimum and maximum number of matches per day
     # maximum grounds where matches are happening in day
+    print("Rule: Minimum and Maximum number of Matches for each day")
+    print("Rule: Maximum number of Ground on which matches are held on any day")
     for (d, (minM, maxM, maxG, daynum)) in enumerate(match_days):
         model.Add(sum([fixtures[d][i][j]
                        for i in teams for j in teams if i != j]) >= minM)
@@ -231,6 +243,7 @@ def model_matches(num_teams=12, num_grounds=7, initial=[]):
         model.Add(sum([ground_fixture[d][i] for i in grounds]) <= maxG)
 
     # For any team no more than one match per # consecutive days
+    print("Rule: For any team no more than one match per 2 consecutive days")
     for batch in consec_days:
         for i in teams:
             model.Add(sum([fixtures[d][i][j] + fixtures[d][j][i]
@@ -238,11 +251,24 @@ def model_matches(num_teams=12, num_grounds=7, initial=[]):
 
     # Either home or away for the half season
     # Here more constrains will come as the first leg matches will be over
+    print("Rule: Either A vs B or B vs A in a half Season")
     for i in teams:
         for j in teams:
             if i < j:
                 model.Add(sum([fixtures[d][i][j] + fixtures[d][j][i]
                                for d in matchdays]) == 1)
+
+    print("Rule: No more than 2 consecutive home or away matches for a team")
+    for t in teams:
+        for d in range(num_match_days - max_home_stand):
+            model.AddBoolOr([home_fixture[d+offset][t]
+                             for offset in range(max_home_stand+1)])
+            model.AddBoolOr([home_fixture[d+offset][t].Not()
+                             for offset in range(max_home_stand+1)])
+
+    # Special constrains, first day match
+    model.Add(ground_fixture[0][4] == 1)
+    model.Add(sum([fixtures[0][8][6], fixtures[0][9][6]]) == 1)
 
     return (model, fixtures, match_days)
 
