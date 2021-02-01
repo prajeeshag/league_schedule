@@ -5,7 +5,7 @@ import csv
 import datetime
 import calendar
 import itertools
-
+import pickle
 
 from functools import partial
 from functools import reduce
@@ -13,6 +13,9 @@ from functools import reduce
 from ortools.sat.python import cp_model
 
 from utils import *
+
+import requests
+
 
 DEFAULT_DAILY_MATCHES = [
     (0, 0, 0),
@@ -25,20 +28,9 @@ DEFAULT_DAILY_MATCHES = [
 ]
 
 TEAMS = ("YFC", "BSK", "KBFC", "SRV", "BTZ", "RFC",
-         "RGM", "BFC", "TTM", "FCT", "FCC", "SAR")
+         "RGM", "BFC", "TTFC", "FCT", "FCC", "SAR")
 
-GROUNDS = (
-    "Vadakkumpuram Ground, Panayur",
-    "SRV Ground, Chorottur",
-    "Koodathilthodi Ground, Velliyad",
-    "Ariyamkavu Ground, Koonathara",
-    "Panchayath Ground, Vaniyamkulam",
-    "TRK School Ground, Vaniyamkulam",
-    "Evershine Ground, Manissery",
-)
-
-GROUND_ID = (0,     0,      1,     1,     2,     2,
-             3,     3,     4,      4,     5,     6)
+GROUND_ID = (0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 6)
 
 
 def set_consecutive_days(match_days, nc=1):
@@ -121,39 +113,68 @@ def get_scheduled_fixtures(solver, fixtures, start_date, match_days):
                 if solver.Value(fixture):
                     Date = startdate + \
                         datetime.timedelta(days=match_days[day][-1])
-                    Ground = GROUND_ID[home]
                     fixed_matches += [(Date, home, away,
-                                       Ground, match_days[day][-1]), ]
+                                       match_days[day][-1]), ]
     return fixed_matches
 
 
-def screen_dump_results(scheduled_games):
+def screen_dump_results(scheduled_games, teams):
+
+    prev_date = ""
+    d2_time = [(7, 0), (17, 30)]
+    d4_time = [(7, 0), (8, 0), (16, 30), (17, 30)]
+    scdl = []
+    ds = []
+
     print("")
     print("")
     print("-------- Fixture -----------")
-    checkname = 'output.csv'
-    with open(checkname, 'w', newline='') as csvfile:
-        fieldnames = ['date', 'HomeTeam', 'AwayTeam', 'Ground']
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-        prev_date = None
-        for (d, item) in enumerate(scheduled_games):
-            date = item[0].strftime("%b. %d %a")
-            homeTeam = TEAMS[item[1]]
-            awayTeam = TEAMS[item[2]]
-            Ground = GROUNDS[item[3]]
-            width = len(Ground)
+    for (d, item) in enumerate(scheduled_games):
 
-            if not prev_date == date:
-                print("")
-                print("")
-                print("---> {0: >12} ".format(date))
-            print("               {0: >4} x {1: <4} | {2: <{width}}".format(
-                homeTeam, awayTeam, Ground, width=width))
-            prev_date = date
+        df = {}
+        df['date'] = item[0]
+        df['home'] = teams[item[1]]['pk']
+        df['homeAbbr'] = teams[item[1]]['abbr']
+        df['away'] = teams[item[2]]['pk']
+        df['awayAbbr'] = teams[item[2]]['abbr']
+        df['ground'] = teams[item[1]]['home_ground']
+
+        if prev_date != df['date']:
+            if len(ds) == 4:
+                d_time = d4_time
+            elif len(ds) == 2:
+                d_time = d2_time
+
+            for (t, it) in enumerate(ds):
+                it['date'] += datetime.timedelta(hours=d_time[t]
+                                                 [0], minutes=d_time[t][1])
+                scdl.append(it)
+            ds = []
+        ds.append(df)
+        if not prev_date == df['date']:
+            print("")
+            print("")
+            print(
+                "---> {0: >12} ".format(item[0].strftime("%b. %d %a")))
+
+        print("               {0: >4} x {1: <4} ".format(
+            df['homeAbbr'], df['awayAbbr']))
+        prev_date = df['date']
+
+    if len(ds) == 4:
+        d_time = d4_time
+    elif len(ds) == 2:
+        d_time = d2_time
+    for (t, it) in enumerate(ds):
+        it['date'] += datetime.timedelta(hours=d_time[t]
+                                         [0], minutes=d_time[t][1])
+        scdl.append(it)
+
+    with open("fixture.dat", "wb") as fp:
+        pickle.dump(scdl, fp)
 
 
-def report_results(solver, status, fixtures, start_date, match_days, time_limit=None, csv=None):
+def report_results(solver, status, fixtures, start_date, match_days, teams, time_limit=None):
 
     if status == cp_model.INFEASIBLE:
         print('INFEASIBLE')
@@ -169,7 +190,7 @@ def report_results(solver, status, fixtures, start_date, match_days, time_limit=
     scheduled_games = get_scheduled_fixtures(
         solver, fixtures, start_date, match_days)
 
-    screen_dump_results(scheduled_games)
+    screen_dump_results(scheduled_games, teams)
 
     if status != cp_model.OPTIMAL and solver.WallTime() >= time_limit:
         print('Please note that solver reached maximum time allowed %i.' % time_limit)
@@ -177,12 +198,28 @@ def report_results(solver, status, fixtures, start_date, match_days, time_limit=
               solver.ObjectiveValue())
 
 
-def model_matches(num_teams=12, num_grounds=7, initial=[], max_home_stand=2):
+def model_matches(teams_d, initial=[], max_home_stand=2):
+
     model = cp_model.CpModel()
+    num_teams = len(teams_d)
+    grnd_pk = list(set([item['home_ground'] for item in teams_d]))
+
+    grounds_d = {}
+    for (i, pk) in enumerate(grnd_pk):
+        grounds_d[pk] = i
+
+    # GROUND_ID = []
+    # for item in teams_d:
+        # GROUND_ID += [grounds_d[item['home_ground']], ]
+
+    # print('GROUND_ID = ', GROUND_ID)
+
     num_matches = (num_teams * (num_teams - 1)) // 2
+    num_grounds = len(grounds_d)
     grounds = range(num_grounds)
-    print("# of half season matches: {}".format(num_matches))
     teams = range(num_teams)
+
+    print("# of half season matches: {}".format(num_matches))
     daily_matches = set_matchdays(num_matches, initial=initial)
 
     match_days = []
@@ -267,7 +304,7 @@ def model_matches(num_teams=12, num_grounds=7, initial=[], max_home_stand=2):
                              for offset in range(max_home_stand+1)])
 
     # Special constrains, first day match
-    model.Add(ground_fixture[0][4] == 1)
+    model.Add(ground_fixture[0][GROUND_ID[8]] == 1)
     model.Add(sum([fixtures[0][8][6], fixtures[0][9][6]]) == 1)
 
     return (model, fixtures, match_days)
@@ -287,49 +324,31 @@ def solve_model(model, time_limit=None, num_cpus=None, debug=False):
 
 
 def main():
-    """Entry point of the program."""
-    parser = argparse.ArgumentParser(
-        description="Solve sports league match play assignment problem"
-    )
+    url = "https://vleague.in/en/fixture/fixtureinput/?format=json"
 
-    parser.add_argument(
-        "--csv",
-        type=str,
-        dest="csv",
-        default="output.csv",
-        help="A file to dump the team assignments.  Default is output.csv",
-    )
+    resp = requests.get(url=url)
 
-    parser.add_argument(
-        "--timelimit",
-        type=int,
-        dest="time_limit",
-        default=300,
-        help="Maximum run time for solver, in seconds.  Default is 300 seconds.",
-    )
+    data = resp.json()
 
-    parser.add_argument(
-        "--cpu",
-        type=int,
-        dest="cpu",
-        help="Number of workers (CPUs) to use for solver.  Default is 6 or number of CPUs available, whichever is lower",
-    )
+    print("# of Team: %i" % (len(data)))
 
-    parser.add_argument(
-        "--debug", action="store_true", help="Turn on some print statements."
-    )
+    teams = []
+    for (i, team) in enumerate(TEAMS):
+        for item in data:
+            if team == item['abbr'].upper():
+                teams += [item, ]
+                break
 
-    args = parser.parse_args()
-
-    cpu = cpu_guess_and_gripe(args.cpu)
+    cpu = cpu_guess_and_gripe(6)
 
     # set up the model
     initial = [(2, 2, 1), (4, 4, 2)]
     start_date = "30/01/2021"
-    (model, fixtures, match_days) = model_matches(initial=initial)
-    (solver, status) = solve_model(model, args.time_limit, cpu, args.debug)
+    time_limit = 600
+    (model, fixtures, match_days) = model_matches(teams, initial=initial)
+    (solver, status) = solve_model(model, time_limit=time_limit, num_cpus=cpu)
     report_results(solver, status, fixtures, start_date,
-                   match_days, args.time_limit, args.csv)
+                   match_days, teams, time_limit)
 
 
 if __name__ == "__main__":
