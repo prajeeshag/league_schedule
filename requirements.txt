@@ -13,6 +13,7 @@ parso==0.8.1
 pathspec==0.8.1
 protobuf==3.14.0
 pycodestyle==2.6.0
+pytz==2021.1
 regex==2020.11.13
 requests==2.25.1
 six==1.15.0

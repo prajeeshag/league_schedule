@@ -3,8 +3,9 @@ import os
 import re
 import csv
 import datetime
+import pytz
 import calendar
-import itertools
+from itertools import accumulate
 import pickle
 
 from functools import partial
@@ -32,6 +33,8 @@ TEAMS = ("YFC", "BSK", "KBFC", "SRV", "BTZ", "RFC",
 
 GROUND_ID = (0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 6)
 
+def teamId(abbr):
+    return TEAMS.index(abbr)
 
 def set_consecutive_days(match_days, nc=1):
     consecutive_days = []
@@ -104,8 +107,23 @@ def set_matchdays(num_matches, initial=[]):
     return match_days
 
 
+def check_max_home_stand(x):
+    n1 = 0
+    n2 = 0
+    max_home_stand = 2
+    m = max_home_stand
+    for e in x:
+        n1 = n1 + e*n1
+        n2 = n2 - e*n2
+        if n1 > m or n2 < -m:
+            return False
+    return True
+
+
 def get_scheduled_fixtures(solver, fixtures, start_date, match_days):
+    timezone = pytz.timezone('Asia/Kolkata')
     startdate = datetime.datetime.strptime(start_date, "%d/%m/%Y")
+    startdate = timezone.localize(startdate)
     fixed_matches = []
     for (day, fd) in enumerate(fixtures):
         for (home, fh) in enumerate(fd):
@@ -133,6 +151,7 @@ def screen_dump_results(scheduled_games, teams):
 
         df = {}
         df['date'] = item[0]
+        df['day'] = d
         df['home'] = teams[item[1]]['pk']
         df['homeAbbr'] = teams[item[1]]['abbr']
         df['away'] = teams[item[2]]['pk']
@@ -243,10 +262,13 @@ def model_matches(teams_d, initial=[], max_home_stand=2):
             [model.NewBoolVar(name_prefix+'ground %i' % ground) for ground in grounds])
 
     home_fixture = []
+    away_fixture = []
     for day in matchdays:
         name_prefix = 'day %i, ' % (day)
         home_fixture.append(
             [model.NewBoolVar(name_prefix+'home %i' % i) for i in teams])
+        away_fixture.append(
+            [model.NewBoolVar(name_prefix+'away %i' % i) for i in teams])
 
     # Link match fixtures to ground fixtures and home fixtures
     for d in matchdays:
@@ -260,10 +282,15 @@ def model_matches(teams_d, initial=[], max_home_stand=2):
                 elif i != j:
                     model.AddImplication(
                         fixtures[d][i][j], ground_fixture[d][GROUND_ID[i]])
-                    model.AddImplication(
-                        fixtures[d][i][j], home_fixture[d][i])
-                    model.AddImplication(
-                        fixtures[d][i][j], home_fixture[d][j].Not())
+
+                model.AddImplication(
+                    fixtures[d][i][j], home_fixture[d][i])
+                model.AddImplication(
+                    fixtures[d][i][j], home_fixture[d][j].Not())
+                model.AddImplication(
+                    fixtures[d][i][j], away_fixture[d][j])
+                model.AddImplication(
+                    fixtures[d][i][j], away_fixture[d][i].Not())
 
     # forbid playing self
     [model.Add(fixtures[d][i][i] == 0) for d in matchdays for i in teams]
@@ -296,25 +323,47 @@ def model_matches(teams_d, initial=[], max_home_stand=2):
                                for d in matchdays]) == 1)
 
     print("Rule: No more than 2 consecutive home or away matches for a team")
-    for t in teams:
-        for d in range(num_match_days - max_home_stand):
-            model.AddBoolOr([home_fixture[d+offset][t]
-                             for offset in range(max_home_stand+1)])
-            model.AddBoolOr([home_fixture[d+offset][t].Not()
-                             for offset in range(max_home_stand+1)])
+    # for t in teams:
+        # for d in range(num_match_days - max_home_stand):
+            # model.AddBoolOr([home_fixture[d+offset][t]
+                             # for offset in range(max_home_stand+1)])
+            # model.AddBoolOr([home_fixture[d+offset][t].Not()
+                             # for offset in range(max_home_stand+1)])
 
-    # Special constrains, first day match
-    model.Add(ground_fixture[0][GROUND_ID[8]] == 1)
-    model.Add(sum([fixtures[0][8][6], fixtures[0][9][6]]) == 1)
+    for t in teams:
+        model.Add(sum([home_fixture[d][t] for d in matchdays])<=6)
+        model.Add(sum([away_fixture[d][t] for d in matchdays])<=6)
+
+
+
+    model.Add(fixtures[0][teamId('TTFC')][teamId('SAR')]==1)
+    model.Add(fixtures[0][teamId('FCT')][teamId('RGM')]==1)
+
+    model.Add(fixtures[1][teamId('YFC')][teamId('BFC')]==1)
+    model.Add(fixtures[1][teamId('BSK')][teamId('RFC')]==1)
+    model.Add(fixtures[1][teamId('KBFC')][teamId('BTZ')]==1)
+    model.Add(fixtures[1][teamId('SRV')][teamId('FCC')]==1)
+
+    model.Add(fixtures[2][teamId('SRV')][teamId('YFC')]==1)
+    model.Add(fixtures[2][teamId('TTFC')][teamId('FCC')]==1)
+
+    model.Add(fixtures[3][teamId('KBFC')][teamId('SAR')]==1)
+    model.Add(fixtures[3][teamId('RGM')][teamId('BFC')]==1)
+
+    model.Add(fixtures[4][teamId('BTZ')][teamId('SRV')]==1)
+    model.Add(fixtures[4][teamId('RFC')][teamId('FCC')]==1)
+    model.Add(fixtures[4][teamId('TTFC')][teamId('YFC')]==1)
+    model.Add(fixtures[4][teamId('FCT')][teamId('BSK')]==1)
+
 
     return (model, fixtures, match_days)
 
 
 def solve_model(model, time_limit=None, num_cpus=None, debug=False):
     # run the solver
-    solver = cp_model.CpSolver()
-    solver.parameters.num_search_workers = num_cpus
-    status = solver.Solve(model)
+    solver=cp_model.CpSolver()
+    solver.parameters.num_search_workers=num_cpus
+    status=solver.Solve(model)
     print("Solve status: %s" % solver.StatusName(status))
     print("Statistics")
     print("  - conflicts : %i" % solver.NumConflicts())
@@ -324,29 +373,23 @@ def solve_model(model, time_limit=None, num_cpus=None, debug=False):
 
 
 def main():
-    url = "https://vleague.in/en/fixture/fixtureinput/?format=json"
-
-    resp = requests.get(url=url)
-
-    data = resp.json()
-
+    url="https://vleague.in/en/fixture/api/fixtureinput/?format=json"
+    resp=requests.get(url=url)
+    data=resp.json()
     print("# of Team: %i" % (len(data)))
-
-    teams = []
+    teams=[]
     for (i, team) in enumerate(TEAMS):
         for item in data:
             if team == item['abbr'].upper():
                 teams += [item, ]
                 break
-
-    cpu = cpu_guess_and_gripe(6)
-
+    cpu=cpu_guess_and_gripe(6)
     # set up the model
-    initial = [(2, 2, 1), (4, 4, 2)]
-    start_date = "30/01/2021"
-    time_limit = 600
-    (model, fixtures, match_days) = model_matches(teams, initial=initial)
-    (solver, status) = solve_model(model, time_limit=time_limit, num_cpus=cpu)
+    initial=[(2, 2, 1), (4, 4, 2)]
+    start_date="30/01/2021"
+    time_limit=600
+    (model, fixtures, match_days)=model_matches(teams, initial=initial)
+    (solver, status)=solve_model(model, time_limit=time_limit, num_cpus=cpu)
     report_results(solver, status, fixtures, start_date,
                    match_days, teams, time_limit)
 
