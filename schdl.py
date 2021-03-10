@@ -60,6 +60,7 @@ def set_matchdays(num_matches, initial=[]):
 
     min_matches_per_week = sum([mi for (mi, mx, _) in DEFAULT_DAILY_MATCHES])
     max_matches_per_week = sum([mx for (mi, mx, _) in DEFAULT_DAILY_MATCHES])
+
     print(
         "Min and Max Matches per Week {} {}".format(
             min_matches_per_week, max_matches_per_week
@@ -227,12 +228,6 @@ def model_matches(teams_d, initial=[], max_home_stand=2):
     for (i, pk) in enumerate(grnd_pk):
         grounds_d[pk] = i
 
-    # GROUND_ID = []
-    # for item in teams_d:
-        # GROUND_ID += [grounds_d[item['home_ground']], ]
-
-    # print('GROUND_ID = ', GROUND_ID)
-
     num_matches = (num_teams * (num_teams - 1)) // 2
     num_grounds = len(grounds_d)
     grounds = range(num_grounds)
@@ -373,20 +368,51 @@ def solve_model(model, time_limit=None, num_cpus=None, debug=False):
 
 
 def main():
+
     url="https://vleague.in/en/fixture/api/fixtureinput/?format=json"
     resp=requests.get(url=url)
     data=resp.json()
     print("# of Team: %i" % (len(data)))
-    teams=[]
-    for (i, team) in enumerate(TEAMS):
-        for item in data:
-            if team == item['abbr'].upper():
-                teams += [item, ]
-                break
+
+    teams = []
+    GROUND_ID = []
+    for item in data:
+        teams += [item, ]
+        GROUND_ID.append(item['home_ground'])
+
+    url="https://vleague.in/en/fixture/api/matchinput/?format=json"
+    resp=requests.get(url=url)
+    data=resp.json()
+    print("# of Fixed matches: %i" % (len(data)))
+
+    dates = {}
+    for item in data:
+        date = datetime.datetime.strptime(item['date'],'%Y-%m-%dT%H:%M:%S%z')
+        item['date'] = date
+        dt = date.strftime('%Y-%m-%d')
+        dates[dt] = dates.get(dt,0) + 1
+
+    tmp = sorted(dates.keys())
+    sdate = datetime.datetime.strptime(tmp[0], '%Y-%m-%d')
+    edate = datetime.datetime.strptime(tmp[-1], '%Y-%m-%d')
+    dt = datetime.timedelta(days=1)
+    date = sdate
+    initial=[]
+    while date <= edate:
+        tstamp = date.strftime('%Y-%m-%d')
+        nm = dates.get(tstamp,0)
+        initial.append((nm,nm,nm))
+        date += dt
+
+    print(initial)
+
+    exit()
+
     cpu=cpu_guess_and_gripe(6)
     # set up the model
     initial=[(2, 2, 1), (4, 4, 2)]
     start_date="30/01/2021"
+
     time_limit=600
     (model, fixtures, match_days)=model_matches(teams, initial=initial)
     (solver, status)=solve_model(model, time_limit=time_limit, num_cpus=cpu)
